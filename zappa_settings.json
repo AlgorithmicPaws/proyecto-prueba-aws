@@ -9,7 +9,6 @@
             "s3transfer",
             "concurrent"
         ],
-        "profile_name": "default",
         "project_name": "proyecto-prueba",
         "runtime": "python3.9",
         "s3_bucket": "zappa-n0v0t9u6m",
