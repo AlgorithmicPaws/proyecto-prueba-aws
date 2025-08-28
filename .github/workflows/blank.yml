@@ -49,57 +49,60 @@ jobs:
           source env/bin/activate
           pytest
       
-      # Check if Lambda function exists and set output
-      - name: Check if Lambda function exists
-        id: check_lambda
+  # Check if Zappa deployment exists
+      - name: Check Zappa deployment status
+        id: zappa_status
         run: |
           source env/bin/activate
-          # Try to get function info, capture exit code
-          if aws lambda get-function --function-name your-function-name-dev >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Lambda function exists"
+          echo "Checking deployment status..."
+          
+          # Try zappa status command and capture both output and exit code
+          if zappa status dev 2>&1 | grep -q "Status.*deployed\|Function.*exists\|deployed.*ago"; then
+            echo "deployed=true" >> $GITHUB_OUTPUT
+            echo "✅ Zappa deployment exists - will use UPDATE"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Lambda function does not exist"
+            # Also check if we get the specific "not deployed" message
+            if zappa status dev 2>&1 | grep -q "not.*deployed\|does not exist\|No Lambda function found"; then
+              echo "deployed=false" >> $GITHUB_OUTPUT
+              echo "❌ Zappa deployment does not exist - will use DEPLOY"
+            else
+              # If status command fails, try to deploy (safer fallback)
+              echo "deployed=false" >> $GITHUB_OUTPUT
+              echo "⚠️ Unable to determine status clearly - will try DEPLOY first"
+            fi
           fi
         continue-on-error: true
+        env:
+          AWS_DEFAULT_REGION: us-east-1
       
-      # Deploy if function doesn't exist
-      - name: Zappa Deploy
-        if: steps.check_lambda.outputs.exists == 'false'
+      # Show what we detected
+      - name: Show deployment decision
+        run: |
+          echo "Deployment status detected: ${{ steps.zappa_status.outputs.deployed }}"
+          if [ "${{ steps.zappa_status.outputs.deployed }}" == "true" ]; then
+            echo "Will run: zappa update dev"
+          else
+            echo "Will run: zappa deploy dev"
+          fi
+      
+      # Deploy or Update based on status
+      - name: Zappa Deploy or Update
         run: |
           source env/bin/activate
-          zappa deploy dev
-      
-      # Update if function exists
-      - name: Zappa Update
-        if: steps.check_lambda.outputs.exists == 'true'
-        run: |
-          source env/bin/activate
-          zappa update dev
-      
-      # Alternative approach: Use zappa status command
-      # - name: Check Zappa deployment status
-      #   id: zappa_status
-      #   run: |
-      #     source env/bin/activate
-      #     if zappa status dev >/dev/null 2>&1; then
-      #       echo "deployed=true" >> $GITHUB_OUTPUT
-      #     else
-      #       echo "deployed=false" >> $GITHUB_OUTPUT
-      #     fi
-      #   continue-on-error: true
-      
-      # - name: Zappa Deploy or Update
-      #   run: |
-      #     source env/bin/activate
-      #     if [ "${{ steps.zappa_status.outputs.deployed }}" == "true" ]; then
-      #       echo "Updating existing deployment..."
-      #       zappa update dev
-      #     else
-      #       echo "Creating new deployment..."
-      #       zappa deploy dev
-      #     fi
+          
+          if [ "${{ steps.zappa_status.outputs.deployed }}" == "true" ]; then
+            echo "🔄 Updating existing deployment..."
+            zappa update dev
+          else
+            echo "🚀 Creating new deployment..."
+            # If deploy fails because already exists, try update instead
+            if ! zappa deploy dev 2>&1; then
+              echo "Deploy failed, trying update instead..."
+              zappa update dev
+            fi
+          fi
+        env:
+          AWS_DEFAULT_REGION: us-east-1
       
       - name: List buckets
         run: aws s3 ls
